@@ -1,0 +1,58 @@
+#
+# Linux Spinlock from the paper (Fig 2):
+#
+# S. Owens. Reasoning about the implementation of concurrency ab-
+# stractions on x86-TSO. In ECOOP, volume 6183 of LNCS, pages
+# 478–503. Springer, 2010.
+#
+# while (true) {
+#   lock(l);
+#   x=x-1;
+#   if x>=0 {
+#       x=1; //release
+#       unlock(l);
+#   } else {
+#      unlock(l);
+#      while( x<=0) {;}
+#   }
+# }
+#
+# Memory layout:
+# 2 — spinlock counter
+
+
+
+thread t1
+initial acq0
+transition	acq0	acq1	lock
+transition	acq1	acq2	read	counter	2
+transition	acq2	acq3	local	counter	+ counter 1
+transition	acq3	acq4	write	counter	2
+transition	acq4	acq5	unlock
+
+transition	acq5	enter	check	== counter 0
+transition	acq5	acq6	check	> counter 0
+
+transition	acq6	acq7	read	counter	2
+transition	acq7	acq0	check	== counter 0
+
+transition 	enter	acq0	write	0	2
+end
+
+
+thread t2
+initial acq0
+transition	acq0	acq1	lock
+transition	acq1	acq2	read	counter	2
+transition	acq2	acq3	local	counter	+ counter 1
+transition	acq3	acq4	write	counter	2
+transition	acq4	acq5	unlock
+
+transition	acq5	enter	check	== counter 0
+transition	acq5	acq6	check	> counter 0
+
+transition	acq6	acq7	read	counter	2
+transition	acq7	acq0	check	== counter 0
+
+transition 	enter	acq0	write	0	2
+end

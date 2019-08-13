@@ -1,0 +1,20 @@
+# Memory layout:
+# 0 — x
+# 1 — y
+
+
+thread t1
+initial q0
+transition	q0	q1	write	1	0
+
+transition	q1	q2	read	ly	1
+transition	q2	q3	check	==	ly	1
+end
+
+thread t2
+initial q0
+transition	q0	q1	write	1	1
+
+transition	q1	q2	read	lx	0
+transition	q2	q3	check	==	lx	1
+end

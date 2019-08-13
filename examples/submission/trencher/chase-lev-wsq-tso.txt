@@ -1,0 +1,105 @@
+#
+# Chase-Lev WSQ
+#
+# Dynamic circular work-stealing deque
+# http://dl.acm.org/citation.cfm?id=1073974
+# 
+# This is the version in section 2
+#
+# Memory layout:
+# 0 — B
+# 1 — T
+
+thread worker
+initial t00
+
+transition	t00	t0	local 	limit	20 
+
+transition 	t0 	pop0	noop
+transition 	t0 	push0_0	noop
+
+
+transition	pop0	pop1	read	B	0
+transition	pop1	pop2	local	B  - B 1
+transition	pop2	pop3_0	write	B	0
+transition	pop3_0	pop3	mfence
+
+transition	pop3	pop4	read	T	1
+transition	pop4	pop5	check	<   B 	T
+transition	pop4	pop7	check	>=  B   T
+
+transition	pop5	pop6	write 	T 	0
+transition	pop6	end	noop
+
+transition	pop7	end	check	>  B   T
+transition	pop7	pop8	check	==  B   T
+
+transition	pop8	pop10	lock
+transition	pop10	pop11	read  	T1	1
+transition	pop11	pop12	check  ==  T1	T
+transition	pop11	pop13	check  !=  T1	T
+
+transition	pop12	pop13	write   +  T  1 1
+transition	pop13	pop14	unlock
+transition	pop14	end	write   +  T  1 0
+
+
+transition	push0_0	push0	noop
+transition	push0	push1_0	read	B	0
+transition	push1_0	push1	read	T	1
+
+transition	push1	push11	check	<=	B	+	T	limit
+transition	push1	end	check	>	B +	T	limit
+
+transition	push11	end	write	+	B	1	0
+
+transition	end	t0 	mfence
+
+end
+
+
+thread steal
+initial steal0
+
+transition	steal0	steal0_0	noop
+transition	steal0_0	steal1_0	read	T	1
+transition	steal1_0	steal1	noop
+transition	steal1	steal2	read	B	0
+
+transition	steal2	end	check   <=  B 	T
+transition	steal2	steal4	check   >  B 	T
+
+transition	steal4	steal5	lock
+transition	steal5	steal6	read  	T1	1
+transition	steal6	steal7	check  ==  T1	T
+transition	steal7	steal8	write   +  T  1 1
+transition	steal8	steal9	unlock
+
+transition	steal9	end	noop
+
+transition	end steal0	noop
+
+end
+
+thread steal2
+initial steal0
+
+transition	steal0	steal0_0	noop
+transition	steal0_0	steal1_0	read	T	1
+transition	steal1_0	steal1	noop
+transition	steal1	steal2	read	B	0
+
+transition	steal2	end	check   <=  B 	T
+transition	steal2	steal4	check   >  B 	T
+
+transition	steal4	steal5	lock
+transition	steal5	steal6	read  	T1	1
+transition	steal6	steal7	check  ==  T1	T
+transition	steal7	steal8	write   +  T  1 1
+transition	steal8	steal9	unlock
+
+transition	steal9	end	noop
+
+transition	end steal0	noop
+
+end

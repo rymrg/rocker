@@ -1,0 +1,112 @@
+Tpl:
+Program <  (MaxValue :Spacing)? Globals :Spacing (NotAtomic :Spacing)? (TrackedValue :Spacing)* Function+
+Globals <  :"global" VariableAssignment (:',' VariableAssignment)* :";" 
+NotAtomic <  :"na" VariableAssignment (:',' VariableAssignment)* :";" 
+MaxValue < :"max_value" [0-9_]+ :Spacing :";"
+TrackedValue < :"track" :Spacing Identifier :':' :Spacing (
+		Number :Spacing (:',' :Spacing Number :Spacing)* /
+		~"all"
+		) :Spacing :';'
+Variables <- IdentifierList :";"
+VariableAssignment < Identifier :'=' Number / Identifier
+#Function < :"fn" Identifier :"{" ("local" Variables :";")? Statements :"}"
+Function < :"fn" Identifier :"{" ("local" Variables)? Statements :"}"
+
+Statements <- Statement (:Spacing Statement)*
+Statement < LabeledStatement
+          / IfGotoStatement
+          / IfStatement
+          / WhileStatement
+          / GotoStatement
+		  / AssignmentExpression
+		  / StoreStatement
+		  / NAStoreStatement
+		  / FenceStatement
+		  / LockStatement
+		  / UnlockStatement
+		  / NonDeterministic
+		  / WaitStatement
+		  / BCASStatement
+		  / SkipStatement
+		  / AssertStatement
+		  / AssumeStatement
+
+StoreStatement <- Identifier :".store" :'(' Expression :')' :Spacing :';'
+NAStoreStatement <- Identifier :".nastore" :'(' Expression :')' :Spacing :';'
+LabeledStatement < Identifier :':' Statement
+IfGotoStatement < :"if" :'(' Expression :')' GotoStatement
+WhileStatement < :"while" :'(' Expression :')' :'{' Statements :'}'
+GotoStatement < "goto" Identifier ';'
+AssumeStatement < :"assume" :'(' Expression :')' :';'
+
+AssignmentExpression < Identifier :'=' AssignmentRHS :';'
+AssignmentRHS <- NALoadStatement / LoadStatement / Expression / Identifier / CAS / FADD / Exchange / WaitRhs
+
+WaitRhs < :"wait" :'(' Identifier :',' Expression ( :',' Expression )* :')'
+CAS < :"CAS" :'(' Identifier :',' Expression :',' Expression :')'
+Exchange < :"exchange" :'(' Identifier :',' Expression :')'
+LoadStatement <- Identifier :".load" :'(' :Spacing :')'
+NALoadStatement <- Identifier :".naload" :'(' :Spacing :')'
+BCASStatement < :"BCAS" :'(' Identifier :',' Expression :',' Expression :')' :';'
+FADD < :"FADD" :'(' Identifier :',' Expression :')'
+WaitStatement < :"wait" :'(' Identifier :',' Expression ( :',' Expression )* :')' :';'
+FenceStatement < "fence" :';'
+LockStatement < :"lock" :'(' Identifier :')' :';'
+UnlockStatement < :"unlock" :'(' Identifier :')' :';'
+SkipStatement < "skip" :';'
+AssertStatement < :"assert" :'(' Expression :')' ';'
+
+NonDeterministic < :"oneof" :'(' (:'{' Statements :'}')+ :')' :';'
+
+IfStatement < "if" '(' Expression ')' '{' Statements '}' ( "else" '{' Statements '}' )?
+
+Identifier <~  Keyword [a-zA-Z0-9_]+ / !Keyword [a-zA-Z_] [a-zA-Z0-9_]*
+Number <~ [1-9] [0-9]* | '0'
+Keyword <- "BCAS" / "wait"
+		 / "FADD" / "CAS" / "goto" / "if" / "else" / "elif"
+         / "while" / "until" / "do" / "assert" / "fi"
+		 / "local" / "global" / "lock" / "unlock" / "fence"
+		 / "oneof" / "exchange" / "store" / "load"
+
+		/ "active"		/ "assert"		/ "atomic"		/ "bit"
+		/ "bool"		/ "break"		/ "byte"		/ "chan"
+		/ "d_step"		/ "D_proctype"	/ "do"		/ "else"
+		/ "empty"		/ "enabled"		/ "fi"		/ "full"
+		/ "goto"		/ "hidden"		/ "if"		/ "init"
+		/ "int"		/ "len"		/ "mtype"		/ "nempty"
+		/ "never"		/ "nfull"		/ "od"		/ "of"
+		/ "pc_value"	/ "printf"		/ "priority"	/ "proctype"
+		/ "provided"	/ "run"		/ "short"		/ "skip"
+		/ "timeout"		/ "typedef"		/ "unless"		/ "unsigned"
+		/ "xr"		/ "xs"	/	"skip"
+
+Spacing <~ (space / endOfLine / Comment)*
+Comment <~ "//" (!endOfLine .)* endOfLine
+IntegerLiteral <~ Sign? Integer 
+Integer <~ digit+
+Sign <- "-" / "+"
+
+PrimaryExpression < Identifier
+                  / IntegerLiteral
+                  / '(' Expression ')'
+PostfixExpression < PrimaryExpression ( '[' Expression ']'
+                                      )*
+UnaryExpression < PostfixExpression
+                / UnaryOperator UnaryExpression
+UnaryOperator <- [-+!]
+MultiplicativeExpression    < UnaryExpression ([*/] MultiplicativeExpression)*
+AdditiveExpression          < MultiplicativeExpression ([-+] AdditiveExpression)*
+RelationalExpression        < AdditiveExpression (("<=" / ">=" / "<" / ">") RelationalExpression)*
+EqualityExpression          < RelationalExpression (("==" / "!=") EqualityExpression)*
+
+ANDExpression               < EqualityExpression ('&' ANDExpression)*
+ExclusiveORExpression       < ANDExpression ('^' ExclusiveORExpression)*
+InclusiveORExpression       < ExclusiveORExpression ('|' InclusiveORExpression)*
+
+LogicalANDExpression        < InclusiveORExpression ("&&" LogicalANDExpression)*
+#LogicalANDExpression        < EqualityExpression ("&&" LogicalANDExpression)*
+LogicalORExpression         < LogicalANDExpression ("||" LogicalORExpression)*
+
+Expression <- LogicalORExpression
+
+IdentifierList < Identifier (:',' Identifier)*

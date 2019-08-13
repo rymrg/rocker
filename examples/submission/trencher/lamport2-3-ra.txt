@@ -1,0 +1,148 @@
+#
+# Lamport's fast mutex algorithm 3, as presented in
+#
+# L. Lamport. A fast mutual exclusion algorithm. ACM Trans. Comput.
+# Syst., 5(1), 1987.
+# Algorithm 2 
+#
+
+#
+# Memory layout:
+# 0 — x
+# 1 — y
+# 3 - b1
+# 4 - b2
+# 5 - b3
+
+
+thread t1
+initial q0
+transition	q0	q1	write	1	3
+transition	q1_0	q1	mfence
+transition 	q1	q2	write 	1	0
+transition	q2_0	q2	mfence
+
+transition	q2	q3	read	ly	1
+transition	q3	q4	check !=  ly	0
+transition	q3	q7 	check == ly	0
+
+transition	q4	q5	write	0	3
+transition 	q5	q6	read	ly	1
+transition	q6	q0	check 	== ly 	0
+
+transition	q7	q8_0	write	1	1
+transition	q8_0	q8	mfence
+transition	q8	q9_0	read	lx	0
+transition	q9_0	q9	mfence
+transition	q9	q17	check 	== lx	1
+
+transition	q9	q10	check 	!= lx	1
+transition	q10	q11	write	0	3
+transition	q11	q12_0	read	b2	4
+transition	q12_0	q12_0f	check	== b2 0
+transition	q12_0f	q12	mfence
+transition	q12	q12_1	read	b3	5
+transition	q12_1	q13	 check	== b3 0
+
+transition 	q13	q14	read	ly	1
+transition	q14	q17	check == ly	1
+transition	q14	q15	check != ly	1
+
+transition	q15	q16	read	ly	1 
+transition	q16	q0	check == ly	0
+
+transition	q17	q18	write	0	1
+transition	q18	q19	write	0	3
+
+transition	q19	q0	noop
+
+end
+
+thread t2
+initial q0
+transition	q0	q1_0	write	1	4
+transition	q1_0	q1	mfence
+transition 	q1	q2_0	write 	2	0
+transition	q2_0	q2	mfence
+
+transition	q2	q3	read	ly	1
+transition	q3	q4	check !=  ly	0
+transition	q3	q7 	check == ly	0
+
+transition	q4	q5	write	0	4
+transition 	q5	q6	read	ly	1
+transition	q6	q0	check 	== ly 	0
+
+transition	q7	q8_0	write	2	1
+transition	q8_0	q8	mfence
+transition	q8	q9_0	read	lx	0
+transition	q9_0	q9	mfence
+transition	q9	q17	check 	== lx	2
+
+transition	q9	q10	check 	!= lx	2
+transition	q10	q11	write	0	4
+transition	q11	q12_0	read	b1	3
+transition	q12_0	q12_0f	check	== b1 0
+transition	q12_0f	q12	mfence
+transition	q12	q12_1	read	b3	5
+transition	q12_1	q13	 check	== b3 0
+
+transition	q13_0	q13	mfence
+transition 	q13	q14	read	ly	1
+transition	q14	q17	check == ly	2
+transition	q14	q15	check != ly	2
+
+transition	q15	q16	read	ly	1 
+transition	q16	q0	check == ly	0
+
+transition	q17	q18	write	0	1
+transition	q18	q19	write	0	4
+
+transition	q19	q0	noop
+
+end
+
+
+thread t3
+initial q0
+transition	q0	q1_0	write	1	5
+transition	q1_0	q1	mfence
+transition 	q1	q2_0	write 	3	0
+transition	q2_0	q2	mfence
+
+transition	q2	q3	read	ly	1
+transition	q3	q4	check !=  ly	0
+transition	q3	q7 	check == ly	0
+
+transition	q4	q5	write	0	5
+transition 	q5	q6	read	ly	1
+transition	q6	q0	check 	== ly 	0
+
+transition	q7	q8_0	write	3	1
+transition	q8_0	q8	mfence
+transition	q8	q9_0	read	lx	0
+transition	q9_0	q9	mfence
+transition	q9	q17	check 	== lx	4
+
+transition	q9	q10	check 	!= lx	4
+transition	q10	q11	write	0	5
+transition	q11	q12_0	read	b1	3
+transition	q12_0	q12_0f	check	== b1 0
+transition	q12_0f	q12	mfence
+transition	q12	q12_1	read	b2	4
+transition	q12_1	q13	 check	== b2 0
+
+transition	q13_0	q13	mfence
+transition 	q13	q14	read	ly	1
+transition	q14	q17	check == ly	3
+transition	q14	q15	check != ly	3
+
+transition	q15	q16	read	ly	1 
+transition	q16	q0	check == ly	0
+
+transition	q17	q18	write	0	1
+transition	q18	q19	write	0	5
+
+transition	q19	q0	noop
+
+end

@@ -1,0 +1,86 @@
+#
+# Seqlock algorithm.
+#
+# Writer:
+# while (true) {
+#   c++;
+#   x1 = data1;
+#   y1 = data2;
+#   c++;
+# }
+#
+# Reader:
+# while (true) {
+#  do {
+#      do {c0 = c;} while {c0 % 2};
+#       data1=x1;
+#       data2 = x2;
+#  } while { c!= c0}
+#  }  
+#
+#  0: c
+#  1: data1
+#  2: data2
+
+thread writer
+initial q00
+transition q00 q0 local cnt 0
+transition 	q0 	q110	read	counter	0
+transition q110 finish check >= cnt 5
+transition q110 q111 check < cnt 5
+transition q111 q1 local cnt + cnt 1
+
+transition 	q1	q2	write	+ 1 counter 	0
+transition 	q2	q3	write	1	1
+transition	q3	q4	write	1	2
+transition	q4	q5	write	counterplus2 	0
+transition 	q5	q0	noop
+
+end
+
+
+thread reader1  
+initial q0
+transition 	q0 	q1	read	c0	0
+transition	q1	q1_0	local	c01	& c0 1 
+transition	q1_0	q2	check	== c01	0
+transition	q1_0	q0	check	!= c01	0
+
+transition	q2	q3	read	data1	1
+transition	q3	q4	read	data2	2
+transition	q4	q5	read	c01	0
+transition	q5	q0 	check	!= c01 c0
+transition	q5	q6	check	== c01 c0
+transition	q6	q0	noop
+end
+
+thread reader2  
+initial q0
+transition 	q0 	q1	read	c0	0
+transition	q1	q1_0	local	c01	& c0 1 
+transition	q1_0	q2	check	== c01	0
+transition	q1_0	q0	check	!= c01	0
+
+transition	q2	q3	read	data1	1
+transition	q3	q4	read	data2	2
+transition	q4	q5	read	c01	0
+transition	q5	q0 	check	!= c01 c0
+transition	q5	q6	check	== c01 c0
+transition	q6	q0	noop
+end
+
+thread reader3
+initial q0
+transition 	q0 	q1	read	c0	0
+transition	q1	q1_0	local	c01	& c0 1 
+transition	q1_0	q2	check	== c01	0
+transition	q1_0	q0	check	!= c01	0
+
+transition	q2	q3	read	data1	1
+transition	q3	q4	read	data2	2
+transition	q4	q5	read	c01	0
+transition	q5	q0 	check	!= c01 c0
+transition	q5	q6	check	== c01 c0
+transition	q6	q0	noop
+end
+

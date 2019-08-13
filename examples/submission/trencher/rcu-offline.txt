@@ -1,0 +1,386 @@
+# RCU test 
+# adopted from  
+# [ Owicki-Gries Reasoning for Weak Memory Models,
+#   Ori Lahav and Viktor Vafeiadis; ICALP 2015 ]
+# (explanation copied and adapted as well) 
+#
+# The following code is based on an implementation of the quiescent-
+# state-based user-mode RCU implementation of [Desnoyers et al., IEEE Trans.
+# Parallel Distrib. Syst. 23(2), 375–382 (2012)]. We consider a very simple shared
+# data structure, that consists of two containers n_0, n_1, and one index variable
+# m, with the property that n_m represents the updated container. This structure
+# is accessed concurrently by 3 reader threads, that constantly read n_m. The
+# writer thread constantly wants to flip the current container n_m (m is either 0
+# or 1) and deallocate n_m (which we model by the assignment n_m := 0). Thus it
+# flips m, and then synchronizes with all the concurrent readers. Synchronization
+# happens by the writer storing a new value (0 or 1) in the writer’s RCU
+# synchronization location w, and waiting for each of the readers to acknowledge
+# that they are aware of this new value. When a reader acknowledges the writer's
+# update to w (by setting its RCU synchronization location r_i to match the value
+# of w), it notifies the writer that it is no longer accessing n_m. Only then the
+# writer can deallocate n_m. We verify the safety of this mechanism, by proving
+# that the readers never access a deallocated value: they always return data != 0.
+
+# Memory layout
+# 0 - M
+# 1 - n0
+# 2 - n1
+# 3 - gc
+# 4 - r1
+# 5 - r2
+# 6 - r3
+# 7 - lck
+
+thread initalizer
+initial t0
+transition t0 t1 write 1 1
+transition t1 t2 write 1 3
+end
+
+thread thread1
+initial t000
+
+transition t000 t001 local M 0
+transition t001 t002 local n0 1
+transition t002 t003 local n1 2
+transition t003 t004 local gc 3
+transition t004 t005 local r1 4
+transition t005 t006 local r2 5
+transition t006 t007 local r3 6
+transition t007 t00 local lck 7
+
+
+transition t00 t01 local cell 0
+transition t01 t02 local data 0
+transition t02 t03 local a 0
+transition t03 t04 local cnt 0
+transition t04 t05 local num 3
+transition t05 t06 local is_online 0
+transition t06 t07 local myR 4
+transition t07 t08 read tmp gc
+transition t08 t1 check == tmp 1
+
+
+transition t1 read0 noop
+transition t1 write0 noop
+transition t1 updategc0 noop
+transition t1 online0 noop
+transition t1 offline0 noop
+
+
+transition read0 end check == is_online 0
+transition read0 read1 check == is_online 1
+transition read1 read2 read cell M
+transition read2 read20 check == 0 cell
+transition read2 read21 check == 1 cell
+transition read20 read3 read data n0
+transition read21 read3 read data n1
+transition read3 end noop
+
+
+transition updategc0 end check == is_online 0
+transition updategc0 updategc1 check == is_online 1
+transition updategc1 updategc2 read a gc
+transition updategc2 updategc3 write a myR
+transition updategc3 updategc4 mfence
+transition updategc4 end noop
+
+
+transition online0 end check == is_online 1
+transition online0 online1 check == is_online 0
+transition online1 online2 read a gc
+transition online2 online3 write a myR
+transition online3 online4 mfence
+transition online4 end local is_online 1
+
+
+transition offline0 end check == is_online 0
+transition offline0 offline1 check == is_online 1
+transition offline1 offline2 write 0 myR
+transition offline2 offline3 mfence
+transition offline3 offline4 local is_online 0
+transition offline4 end	noop
+
+
+transition write0 end check > cnt num
+transition write0 write1 check <= cnt num
+transition write1 write2 local cnt + cnt 1
+transition write2 write20 check == is_online 1
+transition write2 write3 check == is_online 0
+transition write20 write3 write 0 myR
+
+transition	write3	write31	lock
+transition	write31	write32	read	L	lck
+transition	write32	write33	check	==  L 	0
+transition	write33	write34	write	1	lck
+transition	write34	write4	unlock
+
+transition write4 write40 read cell M
+transition write40 write41 check == 0 cell
+transition write40 write42 check == 1 cell
+transition write41 write43 write 1 n1
+transition write42 write43 write 1 n0
+transition write43 write5 write - 1 cell M
+
+transition write5 write50 read a gc
+transition write50 write51 local a + a 1
+transition write51 write52 write a gc
+transition write50 write51 mfence
+transition write51 write52 read tmp r1
+transition write52 write53 check || == tmp a == tmp 0
+transition write53 write54 read tmp r2
+transition write54 write55 check || == tmp a == tmp 0
+transition write55 write56 read tmp r3
+transition write56 write57 check || == tmp a == tmp 0
+transition write57 write6 noop
+
+transition write6 write60 check == 0 cell
+transition write6 write61 check == 1 cell
+transition write60 write7 write 0 n0
+transition write61 write7 write 0 n1
+
+transition write7 write8 write 0 lck
+
+transition write8 write9 check == is_online 0
+transition write8 write81 check == is_online 1
+transition write81 write82 read a gc
+transition write82 write83 write a myR
+transition write83 write9 mfence
+
+transition write9 end noop
+
+
+transition end t1 noop
+end
+
+thread thread2
+initial t000
+
+transition t000 t001 local M 0
+transition t001 t002 local n0 1
+transition t002 t003 local n1 2
+transition t003 t004 local gc 3
+transition t004 t005 local r1 4
+transition t005 t006 local r2 5
+transition t006 t007 local r3 6
+transition t007 t00 local lck 7
+
+
+transition t00 t01 local cell 0
+transition t01 t02 local data 0
+transition t02 t03 local a 0
+transition t03 t04 local cnt 0
+transition t04 t05 local num 3
+transition t05 t06 local is_online 0
+transition t06 t07 local myR 5
+transition t07 t08 read tmp gc
+transition t08 t1 check == tmp 1
+
+
+transition t1 read0 noop
+transition t1 write0 noop
+transition t1 updategc0 noop
+transition t1 online0 noop
+transition t1 offline0 noop
+
+
+transition read0 end check == is_online 0
+transition read0 read1 check == is_online 1
+transition read1 read2 read cell M
+transition read2 read20 check == 0 cell
+transition read2 read21 check == 1 cell
+transition read20 read3 read data n0
+transition read21 read3 read data n1
+transition read3 end noop
+
+
+transition updategc0 end check == is_online 0
+transition updategc0 updategc1 check == is_online 1
+transition updategc1 updategc2 read a gc
+transition updategc2 updategc3 write a myR
+transition updategc3 updategc4 mfence
+transition updategc4 end noop
+
+
+transition online0 end check == is_online 1
+transition online0 online1 check == is_online 0
+transition online1 online2 read a gc
+transition online2 online3 write a myR
+transition online3 online4 mfence
+transition online4 end local is_online 1
+
+
+transition offline0 end check == is_online 0
+transition offline0 offline1 check == is_online 1
+transition offline1 offline2 write 0 myR
+transition offline2 offline3 mfence
+transition offline3 offline4 local is_online 0
+transition offline4 end	noop
+
+
+transition write0 end check > cnt num
+transition write0 write1 check <= cnt num
+transition write1 write2 local cnt + cnt 1
+transition write2 write20 check == is_online 1
+transition write2 write3 check == is_online 0
+transition write20 write3 write 0 myR
+
+transition	write3	write31	lock
+transition	write31	write32	read	L	lck
+transition	write32	write33	check	==  L 	0
+transition	write33	write34	write	1	lck
+transition	write34	write4	unlock
+
+transition write4 write40 read cell M
+transition write40 write41 check == 0 cell
+transition write40 write42 check == 1 cell
+transition write41 write43 write 1 n1
+transition write42 write43 write 1 n0
+transition write43 write5 write - 1 cell M
+
+transition write5 write50 read a gc
+transition write50 write51 local a + a 1
+transition write51 write52 write a gc
+transition write50 write51 mfence
+transition write51 write52 read tmp r1
+transition write52 write53 check || == tmp a == tmp 0
+transition write53 write54 read tmp r2
+transition write54 write55 check || == tmp a == tmp 0
+transition write55 write56 read tmp r3
+transition write56 write57 check || == tmp a == tmp 0
+transition write57 write6 noop
+
+transition write6 write60 check == 0 cell
+transition write6 write61 check == 1 cell
+transition write60 write7 write 0 n0
+transition write61 write7 write 0 n1
+
+transition write7 write8 write 0 lck
+
+transition write8 write9 check == is_online 0
+transition write8 write81 check == is_online 1
+transition write81 write82 read a gc
+transition write82 write83 write a myR
+transition write83 write9 mfence
+
+transition write9 end noop
+
+
+transition end t1 noop
+end
+
+thread thread3
+initial t000
+
+transition t000 t001 local M 0
+transition t001 t002 local n0 1
+transition t002 t003 local n1 2
+transition t003 t004 local gc 3
+transition t004 t005 local r1 4
+transition t005 t006 local r2 5
+transition t006 t007 local r3 6
+transition t007 t00 local lck 7
+
+
+transition t00 t01 local cell 0
+transition t01 t02 local data 0
+transition t02 t03 local a 0
+transition t03 t04 local cnt 0
+transition t04 t05 local num 3
+transition t05 t06 local is_online 0
+transition t06 t07 local myR 6
+transition t07 t08 read tmp gc
+transition t08 t1 check == tmp 1
+
+
+transition t1 read0 noop
+transition t1 write0 noop
+transition t1 updategc0 noop
+transition t1 online0 noop
+transition t1 offline0 noop
+
+
+transition read0 end check == is_online 0
+transition read0 read1 check == is_online 1
+transition read1 read2 read cell M
+transition read2 read20 check == 0 cell
+transition read2 read21 check == 1 cell
+transition read20 read3 read data n0
+transition read21 read3 read data n1
+transition read3 end noop
+
+
+transition updategc0 end check == is_online 0
+transition updategc0 updategc1 check == is_online 1
+transition updategc1 updategc2 read a gc
+transition updategc2 updategc3 write a myR
+transition updategc3 updategc4 mfence
+transition updategc4 end noop
+
+
+transition online0 end check == is_online 1
+transition online0 online1 check == is_online 0
+transition online1 online2 read a gc
+transition online2 online3 write a myR
+transition online3 online4 mfence
+transition online4 end local is_online 1
+
+
+transition offline0 end check == is_online 0
+transition offline0 offline1 check == is_online 1
+transition offline1 offline2 write 0 myR
+transition offline2 offline3 mfence
+transition offline3 offline4 local is_online 0
+transition offline4 end	noop
+
+
+transition write0 end check > cnt num
+transition write0 write1 check <= cnt num
+transition write1 write2 local cnt + cnt 1
+transition write2 write20 check == is_online 1
+transition write2 write3 check == is_online 0
+transition write20 write3 write 0 myR
+
+transition	write3	write31	lock
+transition	write31	write32	read	L	lck
+transition	write32	write33	check	==  L 	0
+transition	write33	write34	write	1	lck
+transition	write34	write4	unlock
+
+transition write4 write40 read cell M
+transition write40 write41 check == 0 cell
+transition write40 write42 check == 1 cell
+transition write41 write43 write 1 n1
+transition write42 write43 write 1 n0
+transition write43 write5 write - 1 cell M
+
+transition write5 write50 read a gc
+transition write50 write51 local a + a 1
+transition write51 write52 write a gc
+transition write50 write51 mfence
+transition write51 write52 read tmp r1
+transition write52 write53 check || == tmp a == tmp 0
+transition write53 write54 read tmp r2
+transition write54 write55 check || == tmp a == tmp 0
+transition write55 write56 read tmp r3
+transition write56 write57 check || == tmp a == tmp 0
+transition write57 write6 noop
+
+transition write6 write60 check == 0 cell
+transition write6 write61 check == 1 cell
+transition write60 write7 write 0 n0
+transition write61 write7 write 0 n1
+
+transition write7 write8 write 0 lck
+
+transition write8 write9 check == is_online 0
+transition write8 write81 check == is_online 1
+transition write81 write82 read a gc
+transition write82 write83 write a myR
+transition write83 write9 mfence
+
+transition write9 end noop
+
+
+transition end t1 noop
+end

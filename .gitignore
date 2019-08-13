@@ -22,3 +22,25 @@ docs/
 
 # Code coverage
 *.lst
+
+
+# Spin
+pan.c
+pan.m
+pan.p
+pan.h
+pan.t
+pan.b
+pan
+
+# Promela
+examples/litmus/pml/
+examples/submission/pml/
+
+# binaries
+parsergen/tplspin_parsergen
+tplspin
+
+# dub selection
+dub.selections.json
+parsergen/dub.selections.json

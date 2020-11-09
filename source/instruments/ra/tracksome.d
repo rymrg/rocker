@@ -3,11 +3,14 @@ import instruments.instrument;
 import instruments.utils;
 import instruments.ra.vsc;
 import pegged.grammar;
+import instruments.access;
+import instruments.lib.vsc.memory;
 
 import std.string : format;
 import std.range : iota;
 import std.conv : to;
 import std.algorithm.iteration : map;
+import std.typecons;
 
 mixin GetVarNameValue!("size_t", "VR");
 mixin GetVarNameValue!("size_t", "VU");
@@ -40,6 +43,7 @@ pure @safe class TrackSome : Instrument{
 	const string[] naGlobals;
 	immutable size_t threads;
 	string moduloNumber;
+	mixin MemoryOps;
 	Vsc vsc;
 	pure this(const string[] _vars, const string[] _naVars, size_t _threads, string _moduloNumber, const ref ParseTree t){
 		import std.algorithm : sort;
@@ -67,23 +71,21 @@ pure @safe class TrackSome : Instrument{
 			const auto variable = c.matches[0];
 			foreach (cp; c.children){
 				if (cp.name == "Tpl.Number"){
-					enforce (cp.matches[0].to!size_t < moduloNumber.to!size_t, "Can't track variable %s with value %s when max_memory is %s".format(variable, cp.matches[0], moduloNumber.to!size_t - 1));
-					trackedVariablesValues[variable][cp.matches[0].to!size_t] = true;
-				} else {
-					if (cp.matches[0] == "all"){
-						import std.array : assocArray;
-						import std.range : iota, zip, repeat;
-						trackedVariablesValues[variable] = assocArray(zip(iota(0, moduloNumber.to!size_t), true.repeat));
-						trackedVariablesValues.remove(variable);
-					}
+					const auto v = cp.matches[0].to!size_t;
+					enforce(v < moduloNumber.to!size_t, "Can't track variable %s with value %s when max_memory is %s".format(variable, v, moduloNumber.to!size_t - 1));
+					trackedVariablesValues[variable][v] = true;
 				}
+			}
+			if (c.matches.length > 1 && c.matches[1] == "all"){
+				import std.array : assocArray;
+				import std.range : iota, zip, repeat;
+				trackedVariablesValues[variable] = assocArray(zip(iota(0, moduloNumber.to!size_t), true.repeat));
 			}
 		}
 	}
 
 
 	pure override string initializeMemoryMetadata(){
-		// TODO: Clean this
 		string result;
 		result ~= vsc.initializeMemoryMetadata();
 		foreach (ref to; globals){
@@ -112,19 +114,19 @@ pure @safe class TrackSome : Instrument{
 		result ~= "\n";
 		return result;
 	}
-	pure override string storeStatementBefore(size_t currThread, string mem){
+	pure override string storeStatementBefore(size_t currThread, string mem, StoreType storeType = StoreType.rel){
 		string result;
 		result ~= assertVscKnowledge!"VU"(currThread, mem);
 		result ~= updateStoreStatement(currThread, mem);
 		return result;
 	}
-	pure override string loadStatementBefore(size_t currThread, string mem){
+	pure override string loadStatementBefore(size_t currThread, string mem, string reg, LoadType loadType){
 		string result;
 		result ~= assertVscKnowledge!"VR"(currThread, mem);
 		result ~= updateLoadStatement(currThread, mem);
 		return result;
 	}
-	pure override string waitStatementAfterWaiting(size_t currThread, string mem){
+	pure override string waitStatementAfterWaiting(size_t currThread, string mem, LoadType){
 		return updateLoadStatement(currThread, mem);
 	}
 	pure override string waitStatementBeforeWaiting(size_t currThread, string mem, string[] vals){
@@ -133,7 +135,7 @@ pure @safe class TrackSome : Instrument{
 	pure override string bcasStatementBeforeWaiting(size_t currThread, string mem, string expBefore){
 		return assertVscKnowledge!"VU"(currThread, mem, [expBefore]);
 	}
-	pure override string bcasStatementBefore(size_t currThread, string mem){
+	pure override string bcasStatementBefore(size_t currThread, string mem, LoadType, StoreType){
 		return updateRmwStatement(currThread, mem);
 	}
 	pure override string casStatementBefore(size_t currThread, string mem, string expr){
@@ -152,13 +154,13 @@ pure @safe class TrackSome : Instrument{
 			fi;\n".format(getVSC(currThread, mem), condition);
 		return result;
 	}
-	pure override string casStatementBeforeRead(size_t currThread, string mem, string expr){
+	pure override string casStatementBeforeRead(size_t currThread, string mem, string expr, LoadType){
 		return updateLoadStatement(currThread, mem);
 	}
-	pure override string casStatementBeforeUpdate(size_t currThread, string mem, string expr){
+	pure override string casStatementBeforeUpdate(size_t currThread, string mem, string expr, LoadType, StoreType){
 		return updateRmwStatement(currThread, mem);
 	}
-	pure override string rmwStatementBefore(size_t currThread, string mem){
+	pure override string rmwStatementBefore(size_t currThread, string mem, string reg, LoadType, StoreType){
 		auto result = assertVscKnowledge!"VU"(currThread, mem);
 		result ~= updateRmwStatement(currThread, mem);
 		return result;
@@ -292,131 +294,30 @@ pure @safe class TrackSome : Instrument{
 		return result;
 	}
 
-	pure override string[string] getLocals(){
+	pure override string[string] getLocals(size_t){
 		return null;
 	}
 
-	/**
-	  Make aware of last write (and forget every other stale write)
-
-	  Params:
-	  var = Tracked Variable
-	  fst = Whose Knowledge
-	  loc = Which location should be learnt
-
-	  Returns:
-	  Var[fst][loc] = \emptyset
-
-	  */
-	string clearViewMem(string var, T)(T fst, string loc) @safe pure {
-		mixin("auto getVar = &get%s;".format(var));
-		mixin("auto getVarC = &get%sC;".format(var));
-		string result;
-		foreach (v ; trackedVariablesValues[loc].byKey){
-			result ~= "%1$s = 0;\n".format(getVar(fst, loc, v));
-		}
-		result ~= "%1$s = 0;\n".format(getVarC(fst, loc));
-		return result;
+	override string verifyLocal(size_t currThread, in string var) const pure nothrow @nogc {
+		return null;
+	}
+	override string cleanLocal(size_t currThread, in string var) const pure nothrow @nogc {
+		return null;
 	}
 
-	/**
-	  Make a location learn everything from another location (specific location)
-
-	  Params:
-	  lhsVar = Tracking Variable type (Left)
-	  rhsVar = Tracking Variable type (Right)
-	  lhsFst = Whose knowledge should be updated
-	  rhsFst = Whose knowledge should be taken
-	  loc = Location
-
-	  Returns:
-	  Code to intersect view, T[x][loc] \cap= U[y][loc]
-	  */
-	string intersectViewMemLeft(string lhsVar, string rhsVar, T, U)(T lhsFst, U rhsFst, string loc) @safe pure {
-		mixin("auto getLhsVar = &get%s;".format(lhsVar));
-		mixin("auto getLhsVarC = &get%sC;".format(lhsVar));
-		mixin("auto getRhsVar = &get%s;".format(rhsVar));
-		mixin("auto getRhsVarC = &get%sC;".format(rhsVar));
-		string result;
-		foreach (v ; trackedVariablesValues[loc].byKey){
-			result ~= "%1$s = %1$s && %2$s;\n".format(getLhsVar(lhsFst, loc, v), getRhsVar(rhsFst, loc, v));
-		}
-		result ~= "%1$s = %1$s && %2$s;\n".format(getLhsVarC(lhsFst, loc), getRhsVarC(rhsFst, loc));
-		return result;
+	override string transetiveTaint(size_t, in string, in string[]) const pure nothrow @nogc {
+		return null;
 	}
 
-	/** 
-	  Make tracking locations forget about last write to loc
-
-	  Params:
-	  vars = Tracking variables to forget
-	  fst = Who should forget
-	  loc = Location to forget
-
-	  Returns:
-	  Promela code to make vars[fst] forget about loc
-	  */
-
-	string makePlacesForgetLastWriteLoc(string[] vars, T)(T fst, string loc){
-		mixin("auto getVar = [%-(&get%s, %)];".format(vars));
-		mixin("auto getVarC =[%-(&get%sC%|, %)];".format(vars));
-		string result;
-		result ~= "if\n";
-		foreach (v ; trackedVariablesValues[loc].byKey){
-			auto targets = getVar.map!(f => f(fst, loc, v));
-			result ~= ":: (%s == %s) -> { %-(%s = 1; %|%) }\n".format(loc, v, targets);
+	override Tuple!(bool, string) fence(size_t, FenceType fenceType){
+		final switch (fenceType) with (FenceType){
+			case acq:
+			case rel:
+			case acq_rel:
+				return tuple(true, "skip;\n");
+			case seq_cst:
+			case upd:
+				return Tuple!(bool, string)(false, null);
 		}
-		auto targetsC = getVarC.map!(f => f(fst, loc));
-		result ~= ":: else -> { %-(%s = 1; %|%) }\n".format(targetsC);
-		result ~= "fi;\n";
-		return result;
-	}
-
-	/**
-	  Clones view of tracking variables (specific location)
-
-	  Params:
-	  lhsVar = Tracking Variable type (Left)
-	  rhsVar = Tracking Variable type (Right)
-	  lhsFst = Whose knowledge should be updated
-	  rhsFst = Whose knowledge should be taken
-	  loc = Location
-
-	  Returns:
-	  Code to clone view, T[x][loc] = U[y][loc]
-	  */
-	string cloneViewMem(string lhsVar, string rhsVar, T, U)(T lhsFst, U rhsFst, string loc) @safe pure {
-		mixin("enum getLhsVar = &get%s;".format(lhsVar));
-		mixin("enum getLhsVarC = &get%sC;".format(lhsVar));
-		mixin("enum getRhsVar = &get%s;".format(rhsVar));
-		mixin("enum getRhsVarC = &get%sC;".format(rhsVar));
-		string result;
-		foreach (v ; trackedVariablesValues[loc].byKey){
-			result ~= "%1$s = %2$s;\n".format(getLhsVar(lhsFst, loc, v), getRhsVar(rhsFst, loc, v));
-		}
-		result ~= "%1$s = %2$s;\n".format(getLhsVarC(lhsFst, loc), getRhsVarC(rhsFst, loc));
-		return result;
-	}
-
-	/**
-	  Clones view of tracking variables
-
-	  Params:
-	  lhsVar = Tracking Variable type (Left)
-	  rhsVar = Tracking Variable type (Right)
-	  lhsFst = Whose knowledge should be updated
-	  rhsFst = Whose knowledge should be taken
-
-	  Returns:
-	  Code to clone view, T[x] = U[y]
-	  */
-	string cloneViewMem(string lhsVar, string rhsVar, T, U)(T lhsFst, U rhsFst) @safe pure {
-		string result;
-		foreach (l; globals){
-			result ~= cloneViewMem!(lhsVar, rhsVar)(lhsFst, rhsFst, l);
-		}
-		return result;
 	}
 }
-
-

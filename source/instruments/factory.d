@@ -3,12 +3,13 @@ module instruments.factory;
 import instruments.instrument;
 import instruments.config;
 
+import Rlx = instruments.rlx.factory;
 import Ra = instruments.ra.factory;
 import Sc = instruments.sc.factory;
 
 import std.conv : to, ConvException;
 
-public enum MemoryModel { ra, sc };
+public enum MemoryModel { rlx, ra, sc };
 
 /**
   Factory for Instruments
@@ -27,6 +28,8 @@ public enum MemoryModel { ra, sc };
 
 	pure static Instrument getInstrument(MemoryModel mm, string mode, Config config = Config()){
 		final switch (mm) with (MemoryModel){
+			case rlx:
+				return Rlx.Factory.getInstrument(mode, config);
 			case ra:
 				return Ra.Factory.getInstrument(mode, config);
 			case sc:
@@ -34,11 +37,12 @@ public enum MemoryModel { ra, sc };
 		}
 	}
 
-	pure static @nogc string listInstruments(){
+	pure static string listInstruments(){
 		import std.array : join;
-		enum m = [
+		string m = [
 			Sc.Factory.listInstruments,
-			Ra.Factory.listInstruments
+			Ra.Factory.listInstruments,
+			Rlx.Factory.listInstruments,
 				].join("\n");
 		return m;
 	}

@@ -10,4 +10,5 @@ struct Config{
 	size_t threads;
 	string moduloNumber;
 	const ParseTree parseTree;
+	const(string)[][size_t] locals;
 }

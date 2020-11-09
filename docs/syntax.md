@@ -46,7 +46,7 @@ fn threadname{
 The following statements are available.
 ### Assignments
 #### Expressions
-Expressions are available only using local variables. They include the following operators as in C. `+` `-` `*` `/` `%` `<` `<=` `==` `=>` `>` `!=` `!`. Parenthesis `(` `)` are also available.`
+Expressions are available only using local variables. They include the following operators as in C. `+` `-` `*` `/` `%` `<` `<=` `==` `=>` `>` `!=` `!`. Parenthesis `(` `)` are also available.
 
 For example:
 ```
@@ -59,16 +59,28 @@ To access atomic globals assuming `t` is a local and `x` is an atomic global the
 t = x.load();
 x.store(t + 3);
 ```
+
+Optionally, one can denote access level, if no level is specified the model falls back to the lowest atomic access supported by the model.
+Possible access are `rlx`, `acq`, `rel`.
+```
+t = x.load(acq);
+x.store(t + 3, rel);
+```
 ##### Read-Modify-Write (RMW) operations
 ```
 // Atomically increment x by 5.
 FADD(x, 5); 
+FADD(x, 5, acq, rel); 
 // Put the value of x in a. If x == before, set its value to after.
 a = CAS(x, before, after); 
+// Read the value as rlx whether failing of succeeding, if the expected value is read, store it as rel.
+a = CAS(x, before, after, rlx, rel);
 // Block until x == before, then change its value to after.
 BCAS(x, before, after); 
+BCAS(x, before, after, acq, rel); 
 // Put the value of x inside a and atomically write newval into x
 a = exchange(x, newval); 
+a = exchange(x, newval, acq, rel); 
 ```
 #### Non-Atomic global variables
 To access non-atomic globals assuming `t` is a local and `x` is a non-atomic global the following syntax is available over the global atomic variable `lck`.
@@ -98,9 +110,10 @@ while (t == 0) {
 ```
 ### Fences, Locks and wait
 #### Fence
-To issue a fence use
+To issue a fence use `fence(mod)` with one of the following mods: `acq`, `rel`, `acq_rel`, `seq_cst`.
+Note, that no all models might support all types of fences.
 ```
-fence;
+fence(acq_rel);
 ```
 #### Locks
 Locks are available assuming value tracking is available.
@@ -113,7 +126,9 @@ unlock(lck);
 To block a thread until a value can be read from global atomic location use wait.
 ```
 wait(x, 5);
+wait(x, 5, rlx);
 a = wait(x, 2, 3, 5);
+a = wait(x, 2, 3, 5, rlx);
 ```
 
 ### Assertions
@@ -137,7 +152,7 @@ For simulating random, you can use `oneof`. Which will result in only one block 
 ```
 oneof(
 	{
-	...
+		...
 	}
 	{
 		...

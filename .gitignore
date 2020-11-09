@@ -34,8 +34,7 @@ pan.b
 pan
 
 # Promela
-examples/litmus/pml/
-examples/submission/pml/
+examples/*/*/pml/
 
 # binaries
 parsergen/tplspin_parsergen

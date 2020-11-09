@@ -1,5 +1,5 @@
 # Rocker - RObustness CheKER
-> Rocker is a tool to verify robustness of programs written in TPL against RA semantics.
+> Rocker is a tool to verify robustness of programs written in TPL against C11 semantics.
 
 ## Prerequisites
 * `dub`
@@ -9,18 +9,13 @@
 * `gcc`
 
 ## Tested versions
-* `dmd`		2.084.0
-* `dub`		1.13.0
-* `gcc`		8.2.1
-* `spin`	6.4.8
+* `dmd`		2.092.1
+* `dub`		1.21.0
+* `gcc`		10.1.0
+* `spin`	6.5.2
 
 ### Archlinux
-  - `pacman -S dub dmd dtools`
-  - Install `spin` from AUR
- 
-### Ubuntu
-  - `apt-get install spin dub libphobos2-ldc-shared-dev libphobos2-ldc-shared78 ldc`
-  - `snap install dmd --classic`
+  - `pacman -S dub dmd dtools spin`
 
 ### Homebrew (macOS)
   - `brew install dub dmd spin`
@@ -44,12 +39,13 @@ The tool is made from two utilities.
 
 ```sh
 ./tplspin --help
-./tplspin -i path/to/tpl.tpl -o path/to/promela.pml --memory ra -m trackSome
+./tplspin -i path/to/tpl.tpl -o path/to/promela.pml --memory rlx -m noScFence
 ```
 
 ```sh
 ./spinify.d --help
-./spinify.d path/to/tpl/file.tpl
+./spinify.d --robustness egr --memory rlx -m noScFence path/to/tpl/file.tpl
+./spinify.d --robustness wegr --memory rlx -m obsNoFence path/to/tpl/file.tpl
 ```
 
 ### Available Memory Models
@@ -68,17 +64,37 @@ Memory Model `ra`
 
 The Release Acquire semantics provided by C/C++ 11.
 
-| Verification Mode   | Description                                                                                                                                                                 |
-|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| trackSome           | Tracks only specific values for specific variables. This makes use of the optimization mentioned in the paper.                                                              |
-| vra                 | Does not track any values                                                                                                                                                   |
-| value               | Tracks all values for all variables.                                                                                                                                        |
+| Verification Mode | Description                                                                                                                              |
+|-------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| trackSome         | Tracks only specific values for specific variables. This is the mode defined in the paper "Robustness against Release/Acquire Semantics" |
+
+#### RC20
+Memory Model `rlx`
+
+The repaired C/C++20 model.
+
+| Verification Mode | Description                         |
+|-------------------|-------------------------------------|
+| noScFence         | Robustness under RC20               |
+| obsNoFence        | Observational Robustness under RC20 |
+
+### Robustness Definition
+
+Multiple robustness definitions are available for the spinify tool. These are
+used to make sure the expected robustness is found.
+
+| Flag | Robustness               | Description                                                                                                              |
+|------|--------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| egr  | Robustness               | Execution graph robustness - If all WMM-consistent graphs are also SC-consistent                                         |
+| wegr | Observational Robustness | Observational robustness - If all WMM-consistent graphs can be transformed to SC-consistent by changing irrelevant reads |
+
 
 ## Usage example
 
 Assume the program `sb.tpl` exists in the current folder.
 ```
-// NOTROBUST
+// ROBUSTNESS egr: not: ra.
+// ROBUSTNESS wegr: robust: ra.
 max_value 2;
 global x, y;
 
@@ -97,7 +113,7 @@ fn procb {
 
 Running the program trough `./spinify.d` results in the following output:
 ```
-$ ./spinify.d --memory ra -m trackSome sb.tpl
+$ ./spinify.d --robustness egr  --memory ra -m trackSome sb.tpl
 Program	TPL	Spin	Compile	Pan	Res	Expected	#T	#LoC
 sb.tpl	0.0	0.0	1.7	0.0	no	no	2	12
 ```
@@ -106,8 +122,8 @@ The output shows in TSV format the following information.
 
 - Program name (or path)
 - Time taken to transform the TPL program to a spin instrumented program
-- Time taken to generate the verifer in C from Promela
-- Compliation time of the verifier
+- Time taken to generate the verifier in C from Promela
+- Compilation time of the verifier
 - Time taken to run the verifier
 - Whether or not the program is robust against the provided memory model
 - The expected robustness of the program based on the first line comment in the TPL input

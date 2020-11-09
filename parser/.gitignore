@@ -1,0 +1,15 @@
+.dub
+docs.json
+__dummy.html
+docs/
+parser.so
+parser.dylib
+parser.dll
+parser.a
+parser.lib
+parser-test-*
+*.exe
+*.o
+*.obj
+*.lst
+*.a

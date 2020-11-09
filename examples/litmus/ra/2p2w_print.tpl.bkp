@@ -1,0 +1,14 @@
+// ROBUSTNESS wegr: not: ra.
+max_value 2;
+global x;
+
+fn proca {
+	x.store(1);
+	verify(2);
+}
+
+fn procb {
+	verify(1);
+	x.store(2);
+}
+

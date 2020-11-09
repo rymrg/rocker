@@ -3,8 +3,11 @@
  **/
 import std.stdio;
 import std.range : iota, zip, repeat;
-import std.algorithm : setIntersection, uniq, sort, equal, any;
-import std.algorithm.iteration : filter, map;
+import std.algorithm : uniq, sort, equal, any;
+import std.algorithm.iteration : filter, map, joiner;
+import std.algorithm.searching : find;
+import std.algorithm.setops : setIntersection;
+import std.range : walkLength;
 import std.string : format, join;
 import std.conv : to;
 import std.getopt;
@@ -62,8 +65,6 @@ int main(string[] args)
 	}
 
 
-	File ouf = stdout;
-
 	// Verify input file exists
 	if (ifile.empty) {
 		stderr.writeln("You need to provide an input file");
@@ -80,7 +81,7 @@ int main(string[] args)
 	if (debuginfo)
 		stderr.writeln(tree);
 	{
-		import std.string;
+		import std.string : strip;
 		if (!contents[tree.end .. $].strip.empty){
 			stderr.writefln("%s Failed to parse entire program", ifile);
 			stderr.writeln(contents[tree.end .. $]);
@@ -89,6 +90,7 @@ int main(string[] args)
 	}
 	auto config = getConfigForTree(tree);
 	auto instrument = Factory.getInstrument(memoryModel.to!string, verificationMode.to!string, config);
+	assert (instrument, "No instrument provided by factory");
 	auto promela = toPromela(tree, instrument, config);
 	if (!ofile.empty && ofile != "-"){
 		if (exists(dirName(ofile))){
@@ -132,8 +134,6 @@ Config getConfigForTree(ref const ParseTree p) pure @safe{
 		config.moduloNumber = d.to!string;
 	}
 
-	import std.algorithm : map, find, filter;
-	import std.range : walkLength;
 	auto gpa = t.children.find!(a=>a.name == "Tpl.Globals");
 	enforce(gpa.length > 0, "No globals");
 
@@ -148,8 +148,21 @@ Config getConfigForTree(ref const ParseTree p) pure @safe{
 		config.naVars = na;
 	}
 
-
 	config.threads = t.children.filter!(a=>a.name == "Tpl.Function").walkLength;
+
+	pure @safe const(string)[] extractVars(const ref ParseTree p)  {
+		string[] locals;
+		if (p.children[1].name == "Tpl.Variables"){
+			locals = p.children[1].matches.dup.array;
+			locals.sort;
+		} else {
+			// No local variables
+			locals = [];
+		}
+		locals ~= [fenceVar, lockVar];
+		return locals;
+	}
+	config.locals = zip(config.threads.iota, t.children.filter!(a=>a.name == "Tpl.Function").map!extractVars).assocArray;
 	return config;
 }
 
@@ -168,6 +181,9 @@ string appendModulo(string s) @safe{
 
 enum fenceGlobal = "__FGlob";
 enum endLabel = "__END";
+enum fenceVar = "__F";
+enum lockVar = "__L";
+enum sysVar = "__S"; // Syscalls / print / while / if...
 
 /**
   Convert the PEG tree to Promela code.
@@ -181,10 +197,6 @@ enum endLabel = "__END";
  **/
 string toPromela(ref ParseTree p, Instrument instrument, const ref Config config) @safe
 {
-
-	enum fenceVar = "__F";
-	enum lockVar = "__L";
-
 	/**
 	  Initalize variables
 
@@ -277,20 +289,51 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 		return p.children.any!naGlobalInExpression;
 	}
 
+	/**
+	  Returns identifiers used in expression
+
+	  Params:
+	  p = ParseTree
+	  Returns: identifiers used in an expression
+	 **/
+	const(string)[] identifiersInExpression(ref ParseTree p) pure @safe nothrow{
+		//import std.container : DList;
+		string[] result;
+		const(ParseTree)[] s;
+		s ~= p;
+		while (!s.empty){
+			const curr = s[$-1];
+			s = s[0 .. $-1];
+			if (curr.name == "Tpl.Identifier"){
+				result ~= [curr.matches[0]];
+				continue;
+			} else {
+				s ~= curr.children;
+				//q.insertBack(curr.children);
+			}
+
+		}
+		return result.sort.uniq.setIntersection(config.locals[currThread]).array;
+		//return result.sort.uniq.array;
+		//return p.children.map!identifiersInExpression.joiner.array;
+	}
+
 	/** Write code for Wait Statement
 
 	  Params:
 	  mem = Memory location to wait for
 	  vals = values to wait for
+	  loadType = Access mode for reading
 	  reg = Optional register to read the value into
 
 	  Returns: Promela code for waiting
 	  **/
-	string waitStatement(string mem, in string[] vals, string reg = "") @safe{
+	string waitStatement(string mem, in string[] vals, LoadType loadType, string reg = "") @safe{
 		import std.string : empty;
 		string result;
 		auto vals2 = vals.map!appendModulo.array;
 		enforce(mem in globalsSet, "%s is not a global".format(mem));
+		result ~= instrument.verifyLocal(currThread, vals);
 		result = "atomic {\n";
 		result ~= instrument.waitStatementBeforeWaiting(currThread, mem, vals2);
 		result ~= "};\n";
@@ -299,7 +342,7 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 		if (!reg.empty){
 			result ~= "%s = %s;\n".format(reg, mem);
 		}
-		result ~= instrument.waitStatementAfterWaiting(currThread, mem);
+		result ~= instrument.waitStatementAfterWaiting(currThread, mem, loadType);
 		result ~= "};\n";
 		return result;
 	}
@@ -329,7 +372,7 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 	  p = Sub-tree to parse
 	  Returns: text matching the subtree
 	 **/
-	string parseToCode(ref ParseTree p) @safe {
+	string parseToCode(ParseTree p) @safe {
 		switch(p.name)
 		{
 			case "Tpl":
@@ -340,8 +383,6 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 				string result;
 				moduloNumber = config.moduloNumber;
 
-				import std.algorithm : map, find, filter;
-				import std.range : walkLength;
 				// Globals
 				auto gpa = p.children.find!(a=>a.name == "Tpl.Globals");
 				enforce(gpa.length>0, "No globals");
@@ -399,10 +440,10 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 			case "Tpl.Function":
 				functions ~= p.matches[0];
 				string result = "proctype " ~ p.matches[0] ~ "(){\n";
-				result ~= "bit " ~ fenceVar ~ ";\n";
-				foreach (k, t; instrument.getLocals){
+				foreach (k, t; instrument.getLocals(currThread)){
 					result ~= t ~ " " ~ k ~ ";\n";
 				}
+				result ~= "bit " ~ fenceVar ~ ";\n";
 				result ~= "bool " ~ getAssertVariableLocal ~";\n";
 				result ~= "bit " ~ lockVar ~ ";\n";
 				if (p.children[1].name == "Tpl.Variables"){
@@ -434,14 +475,20 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 				return "/* " ~ p.input[p.begin..p.end] ~ " */\n" ~ parseToCode(p.children[0]);
 
 			case "Tpl.WhileStatement":
-				return "do\n :: (%s) -> %s \n:: else -> break\nod;".format(parseToCode(p.children[0]).appendModulo, parseToCode(p.children[1]));
+				return "do\n :: (%1$s) -> %3$s %2$s \n:: else -> %3$s break\nod;skip;".format(parseToCode(p.children[0]).appendModulo, parseToCode(p.children[1]), instrument.verifyLocal(currThread, identifiersInExpression(p.children[0])));
 
 			case "Tpl.StoreStatement":
-				string expr = p.matches[1..$].join(" ").appendModulo;
+				string expr = p.children[1].matches.join(" ").appendModulo;
 				string mem = p.matches[0];
 				enforce (mem in globalsSet, "%s is not a global".format(mem));
-				string result = "atomic {\n";
-				result ~= instrument.storeStatementBefore(currThread, mem);
+				auto access = StoreType.rlx;
+				auto accessTree = p.children.find!(a=>a.name == "Tpl.StoreType");
+				if (!accessTree.empty){
+					access = accessTree[0].matches[0].to!StoreType;
+				}
+				string result = "d_step {\n";
+				result ~= instrument.verifyLocal(currThread, identifiersInExpression(p.children[1]));
+				result ~= instrument.storeStatementBefore(currThread, mem, access);
 				result ~= mem ~ " = " ~ expr ~ "\n";
 				result ~= "};\n";
 				return result;
@@ -451,7 +498,8 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 				string mem = p.matches[0];
 				enforce (mem in naGlobalsSet, "%s is not a non atomic".format(mem));
 				string result = instrument.naStoreStatementBeforeAtomic(currThread, mem);
-				result ~= "atomic {\n";
+				result ~= "d_step {\n";
+				result ~= instrument.verifyLocal(currThread, identifiersInExpression(p.children[1]));
 				result ~= instrument.naStoreStatementBefore(currThread, mem);
 				result ~= mem ~ " = " ~ expr ~ "\n";
 				result ~= "};\n";
@@ -459,21 +507,37 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 
 			case "Tpl.WaitStatement":
 				string mem = p.matches[0];
+				auto access = LoadType.rlx;
+				auto accessTree = p.children.find!(a=>a.name == "Tpl.LoadType");
+				if (!accessTree.empty){
+					access = accessTree[0].matches[0].to!LoadType;
+				}
 				enforce (mem in globalsSet, "%s is not a global".format(mem));
-				string[] vals = p.matches[1..$];
-				return waitStatement(mem, vals);
+				import std.algorithm.searching : until;
+				string[] vals = p.children[1..$].until!(a=>a.name == "Tpl.LoadType").map!(x=>x.matches[0]).array;
+				return waitStatement(mem, vals, access);
 
 			case "Tpl.BCASStatement":
 				string mem = p.matches[0];
 				string expBefore = p.children[1].matches.join.appendModulo;
 				string expAfter = p.children[2].matches.join.appendModulo;
 				enforce (mem in globalsSet, "%s is not a global".format(mem));
-				string result = "atomic {\n";
+				auto loadType = LoadType.rlx;
+				auto storeType = StoreType.rlx;
+				auto accessTree = p.children.find!(a=>a.name == "Tpl.LoadType");
+				if (!accessTree.empty){
+					loadType = accessTree[0].matches[0].to!LoadType;
+					auto accessTree2 = accessTree.find!(a=>a.name == "Tpl.StoreType");
+					storeType = accessTree2[0].matches[0].to!StoreType;
+				}
+				string result = "d_step {\n";
+				result ~= instrument.verifyLocal(currThread, identifiersInExpression(p.children[1]));
+				result ~= instrument.verifyLocal(currThread, identifiersInExpression(p.children[2]));
 				result ~= instrument.bcasStatementBeforeWaiting(currThread, mem, expBefore);
 				result ~= "};\n";
-				result ~= "atomic {\n";
+				result ~= "d_step {\n";
 				result ~= "%s == %s;\n".format(mem, expBefore);
-				result ~= instrument.bcasStatementBefore(currThread, mem);
+				result ~= instrument.bcasStatementBefore(currThread, mem, loadType, storeType);
 				result ~= "%s = %s;\n".format(mem, expAfter);
 				result ~= "};\n";
 				return result;
@@ -486,36 +550,48 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 				auto rightchild = p.children[1].children[0];
 				switch (rightchild.name){
 					case "Tpl.Expression":
-						return "%s = %s;\n".format(register, parseToCode(rightchild).appendModulo);
+						result ~= instrument.verifyLocal(currThread, identifiersInExpression(rightchild));
+						result ~= instrument.cleanLocal(currThread, register);
+						return result ~ "%s = %s;\n".format(register, parseToCode(rightchild).appendModulo);
 					case "Tpl.CAS":
 					case "Tpl.FADD":
 					case "Tpl.Exchange":
 						// Shared code for RMW operation
 						string mem = p.matches[1];
 						enforce (mem in globalsSet, "%s is not a global".format(mem));
-						result ~= "atomic {\n";
+						auto loadType = LoadType.rlx;
+						auto storeType = StoreType.rlx;
+						auto accessTree = rightchild.children.find!(a=>a.name == "Tpl.LoadType");
+						if (!accessTree.empty){
+							loadType = accessTree[0].matches[0].to!LoadType;
+							auto accessTree2 = accessTree.find!(a=>a.name == "Tpl.StoreType");
+							storeType = accessTree2[0].matches[0].to!StoreType;
+						}
+						result ~= "d_step {\n";
 						enforce (!rightchild.children[1..$].any!globalInExpression, "Found global in expression %s".format(p.input[p.begin..p.end]));
 						enforce (!rightchild.children[1..$].any!naGlobalInExpression, "Found non atomic in expression %s".format(p.input[p.begin..p.end]));
+						result ~= instrument.verifyLocal(currThread, identifiersInExpression(rightchild.children[1]));
 						switch (rightchild.name) {
 							case "Tpl.CAS":
 								string assertStringRead;
 								string assertStringUpdate;
 								string expr = parseToCode(rightchild.children[1]).appendModulo;
 								string exprNew = parseToCode(rightchild.children[2]).appendModulo;
+								result ~= instrument.verifyLocal(currThread, identifiersInExpression(rightchild.children[2]));
 
 
 								result ~= instrument.casStatementBefore(currThread, mem, expr);
 								result ~= "if\n :: %1$s == %2$s -> %3$s;\n :: else %4$s;\nfi;\n".format(
 										mem, expr,
-										instrument.casStatementBeforeUpdate(currThread, mem, expr),
-										instrument.casStatementBeforeRead(currThread, mem, expr),
+										instrument.casStatementBeforeUpdate(currThread, mem, expr, loadType, storeType),
+										instrument.casStatementBeforeRead(currThread, mem, expr, loadType),
 										);
 								result ~= "%s = %s;\n".format(p.matches[0], mem);
 								result ~= "if\n :: %s == %s -> %s = %s\n :: else\nfi;\n".format(mem, expr, mem, exprNew);
 								break;
 							case "Tpl.FADD":
 							case "Tpl.Exchange":
-								result ~= instrument.rmwStatementBefore(currThread, mem);
+								result ~= instrument.rmwStatementBefore(currThread, mem, register, loadType, storeType);
 								result ~= "%s = %s;\n".format(p.matches[0], mem);
 								if (rightchild.name == "Tpl.FADD")
 									result ~= mem ~ " = " ~ ( mem ~ " + " ~ parseToCode(rightchild.children[1])).appendModulo ~ ";\n";
@@ -532,8 +608,13 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 					case "Tpl.LoadStatement":
 						string mem = p.matches[1];
 						enforce (mem in globalsSet, "%s is not a global".format(mem));
-						result = "atomic {\n";
-						result ~= instrument.loadStatementBefore(currThread, mem);
+						auto access = LoadType.rlx;
+						auto accessTree = rightchild.children.find!(a=>a.name == "Tpl.LoadType");
+						if (!accessTree.empty){
+							access = accessTree[0].matches[0].to!LoadType;
+						}
+						result = "d_step {\n";
+						result ~= instrument.loadStatementBefore(currThread, mem, register, access);
 						result ~= register ~ " = " ~ mem ~ "\n";
 						result ~= "};\n";
 						return result;
@@ -547,7 +628,14 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 						string reg = p.matches[0];
 						string mem = p.matches[1];
 						string[] vals = p.matches[2..$];
-						return waitStatement(mem, vals, reg);
+
+						auto access = LoadType.rlx;
+						auto accessTree = rightchild.children.find!(a=>a.name == "Tpl.LoadType");
+						if (!accessTree.empty){
+							access = accessTree[0].matches[0].to!LoadType;
+							vals = vals[1..$-1];
+						}
+						return waitStatement(mem, vals, access, reg);
 					default:
 						throw new Exception(format("Invalid assignment: %s", p.input[p.begin..p.end]));
 				}
@@ -555,37 +643,55 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 				assert(0);
 
 			case "Tpl.LabeledStatement":
-				return p.matches[0] ~ ": " ~ parseToCode(p.children[1]);
+				return p.matches[0] ~ ": skip; " ~ parseToCode(p.children[1]);
 			case "Tpl.GotoStatement":
 				return p.matches.join(" ");
 			case "Tpl.IfGotoStatement":
 				enforce (!globalInExpression(p.children[0]), "Found global in expression %s".format(p.input[p.begin..p.end]));
 				enforce (!naGlobalInExpression(p.children[0]), "Found non atomic in expression %s".format(p.input[p.begin..p.end]));
-				return "if\n :: %s -> %s\n :: else\nfi;\n".format(p.children[0].matches.join.appendModulo, p.children[1].matches.join(" "));
+				string result;
+				result ~= instrument.verifyLocal(currThread, identifiersInExpression(p.children[0]));
+				return result ~ "if\n :: %s -> %s\n :: else\nfi;\n".format(p.children[0].matches.join.appendModulo, p.children[1].matches.join(" "));
 			case "Tpl.IfStatement":
 				enforce (!globalInExpression(p.children[0]), "Found global in expression %s".format(p.input[p.begin..p.end]));
 				enforce (!naGlobalInExpression(p.children[0]), "Found non atomic in expression %s".format(p.input[p.begin..p.end]));
-				return "if\n :: %1$s -> %2$s\n :: else -> %3$s \nfi;\n".format(p.children[0].matches.join.appendModulo, parseToCode(p.children[1]), p.children.length > 2 ? parseToCode(p.children[2]) : "skip;");
+				string result;
+				result ~= instrument.verifyLocal(currThread, identifiersInExpression(p.children[0]));
+				return result ~ "if\n :: %1$s -> %2$s\n :: else -> %3$s \nfi;\n".format(p.children[0].matches.join.appendModulo, parseToCode(p.children[1]), p.children.length > 2 ? parseToCode(p.children[2]) : "skip;");
 			case "Tpl.Expression":
+				// NOTE: We are do not verify the if the locals in the expression are allowed to be used here.
+				// The calling function is responsible for this
 				enforce (!globalInExpression(p), "Found global in expression %s".format(p.input[p.begin..p.end]));
 				enforce (!naGlobalInExpression(p), "Found non atomic in expression %s".format(p.input[p.begin..p.end]));
 				return p.input[p.begin..p.end].appendModulo;
 
 			case "Tpl.FenceStatement":
-				enum fenceText = "%s = FADD(%s, 0);".format(fenceVar, fenceGlobal);
-				auto tree = parseExpression(fenceText);
+				auto access = FenceType.upd;
+				auto accessTree = p.children.find!(a=>a.name == "Tpl.FenceType");
+				if (!accessTree.empty){
+					access = accessTree[0].matches[0].to!FenceType;
+				}
+				auto toFence = instrument.fence(currThread, access);
+				if (toFence[0]){
+					return "atomic {\n %s \n}".format(toFence[1]);
+				}
+				//enum fenceText = "fence(acq); %s = FADD(%s, 0, acq, rel); fence(rel);".format(fenceVar, fenceGlobal);
+				//enum fenceText = "fence(acq_rel); %s = FADD(%s, 0, rlx, rlx); fence(acq_rel);".format(fenceVar, fenceGlobal);
+				enum fenceText = "fence(acq); %s = FADD(%s, 0, acq, rel); fence(rel);".format(fenceVar, fenceGlobal);
+				//auto tree = parseExpression(fenceText);
+				auto tree = parseStatements(fenceText);
 				return parseToCode(tree);
 
 			case "Tpl.LockStatement":
 				string lockName = p.children[0].matches[0];
 				string lockLabel = getLockLabel();
 				//string lockText = "%s = 1;\n%s: %s = CAS(%s, 0, 1);\nif (%s != 0) goto %s;".format(lockVar, lockLabel, lockVar, lockName, lockVar, lockLabel);
-				string lockText = "BCAS(%s, 0, 1);\n;".format(lockName);
+				string lockText = "BCAS(%s, 0, 1, acq, rlx);\n;".format(lockName);
 				auto tree = parseStatements(lockText);
 				return parseToCode(tree);
 
 			case "Tpl.UnlockStatement":
-				string text = "%s <- 0;".format(p.children[0].matches[0]);
+				string text = "%s.store(0, rel);".format(p.children[0].matches[0]);
 				auto tree = parseStatements(text);
 				return parseToCode(tree);
 
@@ -597,13 +703,20 @@ string toPromela(ref ParseTree p, Instrument instrument, const ref Config config
 				result ~= "fi;\n";
 				return result;
 			case "Tpl.AssumeStatement":
+				// TODO: What should assume do about tainted expressions?
 				return "if\n :: %s -> skip;\n :: else -> goto %s;\nfi;\n".format(parseToCode(p.children[0]), endLabel);
 			case "Tpl.SkipStatement":
 				return "skip;\n";
 			case "Tpl.AssertStatement":
+				// TODO: What should assert do about tainted expressions?
 				return "%1$s = %2$s;\nassert(%1$s);\n".format(getAssertVariableLocal, p.matches.join);
+			case "Tpl.VerifyStatement":
+				string var = p.children[0].matches[0];
+				enforce (var !in globalsSet, "%s is a global".format(var));
+				enforce (var !in naGlobalsSet, "%s is a non atomic global".format(var));
+				return instrument.verifyLocal(currThread, var);
 			default:
-				return "";
+				return null;
 		}
 	}
 

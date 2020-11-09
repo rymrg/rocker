@@ -9,7 +9,6 @@ TrackedValue < :"track" :Spacing Identifier :':' :Spacing (
 		) :Spacing :';'
 Variables <- IdentifierList :";"
 VariableAssignment < Identifier :'=' Number / Identifier
-#Function < :"fn" Identifier :"{" ("local" Variables :";")? Statements :"}"
 Function < :"fn" Identifier :"{" ("local" Variables)? Statements :"}"
 
 Statements <- Statement (:Spacing Statement)*
@@ -30,31 +29,38 @@ Statement < LabeledStatement
 		  / SkipStatement
 		  / AssertStatement
 		  / AssumeStatement
+		  / VerifyStatement
 
-StoreStatement <- Identifier :".store" :'(' Expression :')' :Spacing :';'
+StoreStatement <- Identifier :".store" :'(' Expression (:',' :Spacing StoreType)? :')' :Spacing :';'
 NAStoreStatement <- Identifier :".nastore" :'(' Expression :')' :Spacing :';'
 LabeledStatement < Identifier :':' Statement
 IfGotoStatement < :"if" :'(' Expression :')' GotoStatement
 WhileStatement < :"while" :'(' Expression :')' :'{' Statements :'}'
 GotoStatement < "goto" Identifier ';'
 AssumeStatement < :"assume" :'(' Expression :')' :';'
+VerifyStatement < :"verify" :'(' Identifier :')' :';'
 
 AssignmentExpression < Identifier :'=' AssignmentRHS :';'
 AssignmentRHS <- NALoadStatement / LoadStatement / Expression / Identifier / CAS / FADD / Exchange / WaitRhs
 
-WaitRhs < :"wait" :'(' Identifier :',' Expression ( :',' Expression )* :')'
-CAS < :"CAS" :'(' Identifier :',' Expression :',' Expression :')'
-Exchange < :"exchange" :'(' Identifier :',' Expression :')'
-LoadStatement <- Identifier :".load" :'(' :Spacing :')'
+WaitRhs < :"wait" :'(' Identifier :',' Expression ( :',' Expression )* ( :',' LoadType )? :')'
+CAS < :"CAS" :'(' Identifier :',' Expression :',' Expression ( :',' LoadType  :',' StoreType )? :')'
+Exchange < :"exchange" :'(' Identifier :',' Expression ( :',' LoadType  :',' StoreType )? :')'
+LoadStatement <- Identifier :".load" :'(' (LoadType / :Spacing) :')'
 NALoadStatement <- Identifier :".naload" :'(' :Spacing :')'
-BCASStatement < :"BCAS" :'(' Identifier :',' Expression :',' Expression :')' :';'
-FADD < :"FADD" :'(' Identifier :',' Expression :')'
-WaitStatement < :"wait" :'(' Identifier :',' Expression ( :',' Expression )* :')' :';'
-FenceStatement < "fence" :';'
+FADD < :"FADD" :'(' Identifier :',' Expression ( :',' LoadType  :',' StoreType )? :')'
+
+BCASStatement < :"BCAS" :'(' Identifier :',' Expression :',' Expression ( :',' LoadType  :',' StoreType )? :')' :';'
+WaitStatement < :"wait" :'(' Identifier :',' Expression ( :',' Expression )* ( :',' LoadType )? :')' :';'
+FenceStatement < "fence" (:'(' FenceType :')')? :';'
 LockStatement < :"lock" :'(' Identifier :')' :';'
 UnlockStatement < :"unlock" :'(' Identifier :')' :';'
 SkipStatement < "skip" :';'
 AssertStatement < :"assert" :'(' Expression :')' ';'
+
+LoadType < "rlx" / "acq"
+StoreType < "rlx" / "rel"
+FenceType < "acq_rel" / "acq" / "rel" / "seq_cst" / "upd"
 
 NonDeterministic < :"oneof" :'(' (:'{' Statements :'}')+ :')' :';'
 
@@ -67,6 +73,8 @@ Keyword <- "BCAS" / "wait"
          / "while" / "until" / "do" / "assert" / "fi"
 		 / "local" / "global" / "lock" / "unlock" / "fence"
 		 / "oneof" / "exchange" / "store" / "load"
+		 / "rlx" / "acq" / "rel" / "acq_rel" / "seq_cst"
+		 / "print"
 
 		/ "active"		/ "assert"		/ "atomic"		/ "bit"
 		/ "bool"		/ "break"		/ "byte"		/ "chan"
@@ -94,7 +102,7 @@ PostfixExpression < PrimaryExpression ( '[' Expression ']'
 UnaryExpression < PostfixExpression
                 / UnaryOperator UnaryExpression
 UnaryOperator <- [-+!]
-MultiplicativeExpression    < UnaryExpression ([*/] MultiplicativeExpression)*
+MultiplicativeExpression    < UnaryExpression ([*%/] MultiplicativeExpression)*
 AdditiveExpression          < MultiplicativeExpression ([-+] AdditiveExpression)*
 RelationalExpression        < AdditiveExpression (("<=" / ">=" / "<" / ">") RelationalExpression)*
 EqualityExpression          < RelationalExpression (("==" / "!=") EqualityExpression)*
